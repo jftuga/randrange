@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/binary"
 	"flag"
@@ -9,36 +10,50 @@ import (
 	"os/signal"
 )
 
-// randomInt unchanged
-func randomInt(min, max int) (int, error) {
+// randSource batches reads from crypto/rand to reduce syscall overhead.
+type randSource struct {
+	buf []byte
+	pos int
+}
+
+const randBufSize = 4096 // 512 uint64s per syscall
+
+func newRandSource() *randSource {
+	return &randSource{buf: make([]byte, randBufSize), pos: randBufSize}
+}
+
+func (r *randSource) Uint64() (uint64, error) {
+	if r.pos+8 > len(r.buf) {
+		if _, err := rand.Read(r.buf); err != nil {
+			return 0, err
+		}
+		r.pos = 0
+	}
+	v := binary.LittleEndian.Uint64(r.buf[r.pos : r.pos+8])
+	r.pos += 8
+	return v, nil
+}
+
+func randomInt(rs *randSource, min, max int) (int, error) {
 	if min > max {
 		return 0, fmt.Errorf("min (%d) > max (%d)", min, max)
 	}
 	span := uint64(max - min + 1)
-	n, err := randUint64()
+	n, err := rs.Uint64()
 	if err != nil {
 		return 0, err
 	}
 	return int(n%span) + min, nil
 }
 
-// randUint64 returns a cryptographically-strong pseudo-random uint64.
-func randUint64() (uint64, error) {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return 0, err
-	}
-	return binary.LittleEndian.Uint64(b[:]), nil
-}
-
 // randomFloat returns a uniform float64 in [min, max) rounded to 4 decimal places.
-func randomFloat(min, max float64) (float64, error) {
+func randomFloat(rs *randSource, min, max float64) (float64, error) {
 	if min >= max {
 		return 0, fmt.Errorf("min (%f) >= max (%f)", min, max)
 	}
 	// 53 bits of precision in the mantissa
 	const mask = (1 << 53) - 1
-	n, err := randUint64()
+	n, err := rs.Uint64()
 	if err != nil {
 		return 0, err
 	}
@@ -57,6 +72,10 @@ func generate(start, end int, count int, floats bool) error {
 	registerSIGINFO(sigCh)
 	defer signal.Stop(sigCh)
 
+	rs := newRandSource()
+	w := bufio.NewWriter(os.Stdout)
+	defer w.Flush()
+
 	for i := 0; i < count; i++ {
 		// Check for SIGINFO (ctrl-t) without blocking.
 		select {
@@ -67,17 +86,17 @@ func generate(start, end int, count int, floats bool) error {
 		}
 
 		if floats {
-			v, err := randomFloat(float64(start), float64(end))
+			v, err := randomFloat(rs, float64(start), float64(end))
 			if err != nil {
 				return err
 			}
-			fmt.Printf("%.4f\n", v)
+			fmt.Fprintf(w, "%.4f\n", v)
 		} else {
-			v, err := randomInt(start, end)
+			v, err := randomInt(rs, start, end)
 			if err != nil {
 				return err
 			}
-			fmt.Println(v)
+			fmt.Fprintln(w, v)
 		}
 	}
 	return nil
