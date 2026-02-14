@@ -6,12 +6,13 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"os/signal"
 )
 
 const pgmName = "randrange"
-const pgmVersion = "0.2.2"
+const pgmVersion = "0.3.0"
 const pgmUrl = "https://github.com/jftuga/randrange"
 const pgmDisclaimer = "DISCLAIMER: This program is vibe-coded. Use at your own risk."
 
@@ -39,20 +40,41 @@ func (r *randSource) Uint64() (uint64, error) {
 	return v, nil
 }
 
-func randomInt(rs *randSource, min, max int) (int, error) {
+// applySkew transforms a uniform [0,1) value using a power-law curve.
+// skew "low" clusters values toward 0 (start), "high" toward 1 (end).
+// strength 1.0 = uniform (no skew); higher values = more aggressive skew.
+func applySkew(u float64, skew string, strength float64) float64 {
+	switch skew {
+	case "low":
+		return math.Pow(u, strength)
+	case "high":
+		return 1 - math.Pow(1-u, strength)
+	default:
+		return u
+	}
+}
+
+func randomInt(rs *randSource, min, max int, skew string, strength float64) (int, error) {
 	if min > max {
 		return 0, fmt.Errorf("min (%d) > max (%d)", min, max)
 	}
-	span := uint64(max - min + 1)
+	const mask = (1 << 53) - 1
 	n, err := rs.Uint64()
 	if err != nil {
 		return 0, err
 	}
-	return int(n%span) + min, nil
+	unit := float64(n&mask) / float64(mask+1) // [0,1)
+	unit = applySkew(unit, skew, strength)
+	span := float64(max - min + 1)
+	v := int(unit*span) + min
+	if v > max {
+		v = max
+	}
+	return v, nil
 }
 
-// randomFloat returns a uniform float64 in [min, max) rounded to 8 decimal places.
-func randomFloat(rs *randSource, min, max float64) (float64, error) {
+// randomFloat returns a float64 in [min, max) rounded to 8 decimal places.
+func randomFloat(rs *randSource, min, max float64, skew string, strength float64) (float64, error) {
 	if min >= max {
 		return 0, fmt.Errorf("min (%f) >= max (%f)", min, max)
 	}
@@ -63,12 +85,17 @@ func randomFloat(rs *randSource, min, max float64) (float64, error) {
 		return 0, err
 	}
 	unit := float64(n&mask) / float64(mask+1) // [0,1)
+	unit = applySkew(unit, skew, strength)
 	val := min + unit*(max-min)
-	return float64(int(val*1e8+0.5)) / 1e8, nil
+	result := float64(int(val*1e8+0.5)) / 1e8
+	if result >= max {
+		result = math.Nextafter(max, min) // clamp to just below max
+	}
+	return result, nil
 }
 
 // generate prints count random numbers in [start, end], one per line.
-func generate(start, end int, count int, floats bool) error {
+func generate(start, end int, count int, floats bool, skew string, skewStrength float64) error {
 	if count < 0 {
 		return fmt.Errorf("negative count: %d", count)
 	}
@@ -91,13 +118,13 @@ func generate(start, end int, count int, floats bool) error {
 		}
 
 		if floats {
-			v, err := randomFloat(rs, float64(start), float64(end))
+			v, err := randomFloat(rs, float64(start), float64(end), skew, skewStrength)
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(w, "%.8f\n", v)
 		} else {
-			v, err := randomInt(rs, start, end)
+			v, err := randomInt(rs, start, end, skew, skewStrength)
 			if err != nil {
 				return err
 			}
@@ -109,11 +136,13 @@ func generate(start, end int, count int, floats bool) error {
 
 func main() {
 	var (
-		start   = flag.Int("start", 0, "inclusive lower bound")
-		end     = flag.Int("end", 100, "inclusive upper bound")
-		count   = flag.Int("count", 5, "how many numbers to emit")
-		floats  = flag.Bool("floats", false, "generate floats instead of integers")
-		version = flag.Bool("version", false, "display version and exit")
+		start        = flag.Int("start", 0, "inclusive lower bound")
+		end          = flag.Int("end", 100, "inclusive upper bound")
+		count        = flag.Int("count", 5, "how many numbers to emit")
+		floats       = flag.Bool("floats", false, "generate floats instead of integers")
+		skew         = flag.String("skew", "", "skew distribution: 'low' (toward start) or 'high' (toward end)")
+		skewStrength = flag.Float64("skew-strength", 2.0, "skew intensity: 1.0=uniform, higher=more skewed")
+		version      = flag.Bool("version", false, "display version and exit")
 	)
 	flag.Parse()
 
@@ -122,7 +151,26 @@ func main() {
 		os.Exit(0)
 	}
 
-	if err := generate(*start, *end, *count, *floats); err != nil {
+	if *skew != "" && *skew != "low" && *skew != "high" {
+		fmt.Fprintln(os.Stderr, "error: -skew must be 'low' or 'high'")
+		os.Exit(1)
+	}
+	if *skewStrength < 1.0 {
+		fmt.Fprintln(os.Stderr, "error: -skew-strength must be >= 1.0")
+		os.Exit(1)
+	}
+	skewStrengthSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "skew-strength" {
+			skewStrengthSet = true
+		}
+	})
+	if skewStrengthSet && *skew == "" {
+		fmt.Fprintln(os.Stderr, "error: -skew-strength requires -skew to be set")
+		os.Exit(1)
+	}
+
+	if err := generate(*start, *end, *count, *floats, *skew, *skewStrength); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
