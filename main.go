@@ -46,7 +46,7 @@ func randomInt(rs *randSource, min, max int) (int, error) {
 	return int(n%span) + min, nil
 }
 
-// randomFloat returns a uniform float64 in [min, max) rounded to 4 decimal places.
+// randomFloat returns a uniform float64 in [min, max) rounded to 8 decimal places.
 func randomFloat(rs *randSource, min, max float64) (float64, error) {
 	if min >= max {
 		return 0, fmt.Errorf("min (%f) >= max (%f)", min, max)
@@ -59,7 +59,7 @@ func randomFloat(rs *randSource, min, max float64) (float64, error) {
 	}
 	unit := float64(n&mask) / float64(mask+1) // [0,1)
 	val := min + unit*(max-min)
-	return float64(int(val*1e4+0.5)) / 1e4, nil
+	return float64(int(val*1e8+0.5)) / 1e8, nil
 }
 
 // generate prints count random numbers in [start, end], one per line.
@@ -90,7 +90,7 @@ func generate(start, end int, count int, floats bool) error {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(w, "%.4f\n", v)
+			fmt.Fprintf(w, "%.8f\n", v)
 		} else {
 			v, err := randomInt(rs, start, end)
 			if err != nil {
