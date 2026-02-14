@@ -12,7 +12,7 @@ import (
 )
 
 const pgmName = "randrange"
-const pgmVersion = "0.3.0"
+const pgmVersion = "0.3.1"
 const pgmUrl = "https://github.com/jftuga/randrange"
 const pgmDisclaimer = "DISCLAIMER: This program is vibe-coded. Use at your own risk."
 
