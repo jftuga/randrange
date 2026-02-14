@@ -29,12 +29,14 @@ randrange [flags]
 
 Flags:
 
-| Flag     | Default | Meaning |
-|----------|---------|---------|
-| `-start`  | 0       | Inclusive lower bound |
-| `-end`    | 100     | Inclusive upper bound |
-| `-count`  | 5       | How many numbers to emit |
-| `-floats` | false   | Generate floats (8-decimal precision) instead of integers |
+| Flag             | Default | Meaning |
+|------------------|---------|---------|
+| `-start`         | 0       | Inclusive lower bound |
+| `-end`           | 100     | Inclusive upper bound |
+| `-count`         | 5       | How many numbers to emit |
+| `-floats`        | false   | Generate floats (8-decimal precision) instead of integers |
+| `-skew`          |         | Skew distribution: `low` (toward start) or `high` (toward end) |
+| `-skew-strength` | 2.0     | Skew intensity: 1.0 = uniform, higher = more skewed |
 
 ## Examples
 
@@ -62,6 +64,31 @@ $ randrange -start 10 -end 20 -count 1
 15
 ```
 
+Integers 1-100, skewed toward low values:
+```bash
+$ randrange -start 1 -end 100 -count 10 -skew low
+5
+13
+2
+31
+4
+21
+9
+37
+11
+4
+```
+
+Floats 0-1000, strongly skewed toward high values:
+```bash
+$ randrange -start 0 -end 1000 -count 5 -floats -skew high -skew-strength 4.0
+873.17949292
+913.43629443
+958.50046793
+794.20765032
+999.35220846
+```
+
 ## Progress Status
 
 On macOS and BSD systems, pressing **Ctrl-T** while `randrange` is running sends a `SIGINFO` signal, which causes it to print the current progress to stderr:
@@ -72,11 +99,61 @@ progress: 500000 / 1000000 (50.0%)
 
 This is useful when generating a large quantity of numbers (e.g., `-count 1000000`) and you want to check how far along the run is. On other platforms this signal is not available and Ctrl-T has no effect.
 
+## Skew
+
+The `-skew` flag uses a power-law transformation to bias the distribution while keeping values random. Every value in the range can still appear, but some become more probable.
+
+| `-skew-strength` | Effect |
+|-------------------|--------|
+| 1.0 | Uniform (no skew) |
+| 2.0 | Moderate bias (default) |
+| 3.0 | Strong clustering toward the chosen end |
+| 5.0+ | Very aggressive — most values packed near one end |
+
 ## Notes
 
 * Uses `crypto/rand` for cryptographic strength.
 * Floats are rounded to 8 decimal places.
 * No external dependencies; plain `go run` or `go build` is enough.
+
+## Testing
+
+Run the test suite with:
+
+```bash
+go test -v ./...
+```
+
+The test harness in `main_test.go` includes 23 tests split across two categories:
+
+### Deterministic Tests
+
+These use a pre-loaded `randSource` with known uint64 values so results are fully reproducible with no randomness involved.
+
+* **`applySkew`** — verifies the power-law transform math directly:
+  * Identity: strength `1.0` returns input unchanged for both `low` and `high`
+  * Boundaries: inputs `0.0` and `1.0` always map to `0.0` and `1.0`
+  * Known values: hand-computed results (e.g., `0.5^2 = 0.25`)
+  * Symmetry: `applySkew(x, "low", s) + applySkew(1-x, "high", s) = 1.0`
+  * Monotonicity: output preserves input ordering
+  * No-skew passthrough: empty string returns input at any strength
+
+* **`randomInt` / `randomFloat`** — verifies range and error handling:
+  * Crafted inputs that map to range extremes stay within bounds
+  * `min == max` returns that single value
+  * `min > max` returns an error
+  * Every float result equals itself when re-rounded to 8 decimal places
+
+### Probabilistic Tests
+
+These use real `crypto/rand` with large sample sizes (100k–500k) and generous tolerances to verify statistical properties of the actual pipeline.
+
+* **Uniform distribution**: 500k values bucketed into 10 bins; each bin must be within 10% of the expected count (both ints and floats)
+* **Skew median shift**: with `skew=low, strength=2.0` the median of 500k samples must fall well below the range midpoint (and vice versa for `skew=high`)
+* **Strength comparison**: `strength=5.0` produces a more extreme median than `strength=2.0`
+* **Low/high symmetry**: the fraction of `skew=low` values in the bottom half of the range must match the fraction of `skew=high` values in the top half (within 2%)
+* **Bounds enforcement**: 100k samples across 5 skew configurations all stay within `[min, max]` for ints and `[min, max)` for floats
+* **Full coverage**: for a small range `[0,3]`, all values appear at least once (with and without skew)
 
 ## Personal Project Disclosure
 
