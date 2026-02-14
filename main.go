@@ -10,6 +10,10 @@ import (
 	"os/signal"
 )
 
+const pgmName = "randrange"
+const pgmVersion = "0.2.1"
+const pgmUrl = "https://github.com/jftuga/randrange"
+
 // randSource batches reads from crypto/rand to reduce syscall overhead.
 type randSource struct {
 	buf []byte
@@ -104,12 +108,18 @@ func generate(start, end int, count int, floats bool) error {
 
 func main() {
 	var (
-		start  = flag.Int("start", 0, "inclusive lower bound")
-		end    = flag.Int("end", 100, "inclusive upper bound")
-		count  = flag.Int("count", 5, "how many numbers to emit")
-		floats = flag.Bool("floats", false, "generate floats instead of integers")
+		start   = flag.Int("start", 0, "inclusive lower bound")
+		end     = flag.Int("end", 100, "inclusive upper bound")
+		count   = flag.Int("count", 5, "how many numbers to emit")
+		floats  = flag.Bool("floats", false, "generate floats instead of integers")
+		version = flag.Bool("version", false, "display version and exit")
 	)
 	flag.Parse()
+
+	if *version {
+		fmt.Printf("%s v%s\n%s\n", pgmName, pgmVersion, pgmUrl)
+		os.Exit(0)
+	}
 
 	if err := generate(*start, *end, *count, *floats); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
