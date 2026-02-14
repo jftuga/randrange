@@ -1,5 +1,8 @@
 # randrange
 
+![Code Base: AI Vibes](https://img.shields.io/badge/Code%20Base-AI%20Vibes%20%F0%9F%A4%A0-blue)
+
+
 A tiny, zero-dependency Go utility that prints cryptographically-strong random numbers to stdout.
 
 ## Install
