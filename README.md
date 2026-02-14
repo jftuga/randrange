@@ -5,6 +5,10 @@
 
 A tiny, zero-dependency Go utility that prints cryptographically-strong random numbers to stdout.
 
+## Disclaimer
+
+This program was vibe-coded by `Anthropic Claude Opus`. As such, the author can't be held responsible for incorrect calculations. Please verify the results for any critical applications.
+
 ## Install
 
 ```bash
@@ -63,3 +67,19 @@ $ randrange -start 10 -end 20 -count 1
 * Uses `crypto/rand` for cryptographic strength.
 * Floats are rounded to 8 decimal places.
 * No external dependencies; plain `go run` or `go build` is enough.
+
+## Personal Project Disclosure
+
+This program is my own original idea, conceived and developed entirely:
+
+* On my own personal time, outside of work hours
+* For my own personal benefit and use
+* On my personally owned equipment
+* Without using any employer resources, proprietary information, or trade secrets
+* Without any connection to my employer's business, products, or services
+* Independent of any duties or responsibilities of my employment
+
+This project does not relate to my employer's actual or demonstrably
+anticipated research, development, or business activities. No
+confidential or proprietary information from any employer was used
+in its creation.

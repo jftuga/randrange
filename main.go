@@ -11,8 +11,9 @@ import (
 )
 
 const pgmName = "randrange"
-const pgmVersion = "0.2.1"
+const pgmVersion = "0.2.2"
 const pgmUrl = "https://github.com/jftuga/randrange"
+const pgmDisclaimer = "DISCLAIMER: This program is vibe-coded. Use at your own risk."
 
 // randSource batches reads from crypto/rand to reduce syscall overhead.
 type randSource struct {
@@ -117,7 +118,7 @@ func main() {
 	flag.Parse()
 
 	if *version {
-		fmt.Printf("%s v%s\n%s\n", pgmName, pgmVersion, pgmUrl)
+		fmt.Printf("%s v%s\n%s\n\n%s\n", pgmName, pgmVersion, pgmUrl, pgmDisclaimer)
 		os.Exit(0)
 	}
 
