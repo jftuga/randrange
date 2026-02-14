@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 )
 
 // randomInt unchanged
@@ -51,7 +52,20 @@ func generate(start, end int, count int, floats bool) error {
 	if count < 0 {
 		return fmt.Errorf("negative count: %d", count)
 	}
+
+	sigCh := make(chan os.Signal, 1)
+	registerSIGINFO(sigCh)
+	defer signal.Stop(sigCh)
+
 	for i := 0; i < count; i++ {
+		// Check for SIGINFO (ctrl-t) without blocking.
+		select {
+		case <-sigCh:
+			pct := float64(i) / float64(count) * 100
+			fmt.Fprintf(os.Stderr, "progress: %d / %d (%.1f%%)\n", i, count, pct)
+		default:
+		}
+
 		if floats {
 			v, err := randomFloat(float64(start), float64(end))
 			if err != nil {
