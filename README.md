@@ -37,6 +37,8 @@ Flags:
 | `-floats`        | false   | Generate floats (8-decimal precision) instead of integers |
 | `-skew`          |         | Skew distribution: `low` (toward start) or `high` (toward end) |
 | `-skew-strength` | 2.0     | Skew intensity: 1.0 = uniform, higher = more skewed |
+| `-outliers`      | 0       | Number of outlier values generated near range edges |
+| `-outlier-percent`| 10     | Edge zone size as percent of range (1-49) |
 
 ## Examples
 
@@ -99,6 +101,33 @@ progress: 500000 / 1000000 (50.0%)
 
 This is useful when generating a large quantity of numbers (e.g., `-count 1000000`) and you want to check how far along the run is. On other platforms this signal is not available and Ctrl-T has no effect.
 
+## Outliers
+
+The `-outliers` flag injects a fixed number of values drawn from the edges of the range, scattered randomly among the normal output. This is useful for stress-testing systems that should handle extreme values gracefully.
+
+`-outlier-percent` controls how wide the edge zones are. With the default of `10`, the low zone is the bottom 10% of the range and the high zone is the top 10%. Each outlier is randomly assigned to either zone with a coin flip.
+
+```bash
+# 100 normal values plus 5 outliers from the edges of [0, 1000]
+$ randrange -start 0 -end 1000 -count 100 -outliers 5
+
+# Narrower 5% edge zones: outliers come from [0,50] or [950,1000]
+$ randrange -start 0 -end 1000 -count 100 -outliers 5 -outlier-percent 5
+
+# Works with floats
+$ randrange -start 0 -end 1000 -count 100 -outliers 5 -floats
+
+# Works alongside skew (normal values are skewed, outliers are uniform in edge zones)
+$ randrange -start 0 -end 1000 -count 100 -outliers 5 -skew low
+```
+
+The total number of output lines is always `count + outliers`. The outlier values themselves are generated with uniform distribution (no skew applied) so they cover the full edge zone evenly. The feature is streaming — only the outlier positions are held in memory, not the values — so it works with arbitrarily large counts.
+
+**Validation rules:**
+* `-outliers` must be >= 0
+* `-outlier-percent` must be between 1 and 49
+* `-outlier-percent` requires `-outliers` to be set
+
 ## Skew
 
 The `-skew` flag uses a power-law transformation to bias the distribution while keeping values random. Every value in the range can still appear, but some become more probable.
@@ -124,7 +153,7 @@ Run the test suite with:
 go test -v ./...
 ```
 
-The test harness in `main_test.go` includes 23 tests split across two categories:
+The test harness in `main_test.go` includes 30 tests split across three categories:
 
 ### Deterministic Tests
 
@@ -154,6 +183,18 @@ These use real `crypto/rand` with large sample sizes (100k–500k) and generous 
 * **Low/high symmetry**: the fraction of `skew=low` values in the bottom half of the range must match the fraction of `skew=high` values in the top half (within 2%)
 * **Bounds enforcement**: 100k samples across 5 skew configurations all stay within `[min, max]` for ints and `[min, max)` for floats
 * **Full coverage**: for a small range `[0,3]`, all values appear at least once (with and without skew)
+
+### Outlier Tests
+
+These use `generate()` with captured stdout to verify the outlier injection feature end-to-end.
+
+* **Zero outliers**: `outliers=0` produces exactly `count` values with no regressions
+* **Exact count**: `count + outliers` total lines are emitted
+* **Zone bounds**: with `count=0` and `outliers=100`, every value falls within the expected edge zones
+* **Validation**: negative count is rejected
+* **Large run (ints)**: 10k normal + 50 outliers; edge zone count exceeds what uniform-only would produce
+* **Float zones**: float outliers stay within the correct edge zones
+* **Works with skew**: outliers + skew together produce the correct total count with all values in range
 
 ## Personal Project Disclosure
 

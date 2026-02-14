@@ -12,7 +12,7 @@ import (
 )
 
 const pgmName = "randrange"
-const pgmVersion = "0.3.1"
+const pgmVersion = "0.4.0"
 const pgmUrl = "https://github.com/jftuga/randrange"
 const pgmDisclaimer = "DISCLAIMER: This program is vibe-coded. Use at your own risk."
 
@@ -95,7 +95,9 @@ func randomFloat(rs *randSource, min, max float64, skew string, strength float64
 }
 
 // generate prints count random numbers in [start, end], one per line.
-func generate(start, end int, count int, floats bool, skew string, skewStrength float64) error {
+// When outliers > 0, that many additional values are generated from the edge
+// zones and scattered at random positions among the normal output.
+func generate(start, end int, count int, floats bool, skew string, skewStrength float64, outliers int, outlierPercent int) error {
 	if count < 0 {
 		return fmt.Errorf("negative count: %d", count)
 	}
@@ -108,16 +110,73 @@ func generate(start, end int, count int, floats bool, skew string, skewStrength 
 	w := bufio.NewWriter(os.Stdout)
 	defer w.Flush()
 
-	for i := 0; i < count; i++ {
+	total := count + outliers
+
+	// Pre-select positions for outlier values.
+	outlierPositions := make(map[int]bool, outliers)
+	for len(outlierPositions) < outliers {
+		pos, err := randomInt(rs, 0, total-1, "", 1.0)
+		if err != nil {
+			return err
+		}
+		outlierPositions[pos] = true
+	}
+
+	// Compute edge zone widths.
+	var intZoneWidth int
+	var floatZoneWidth float64
+	if outliers > 0 {
+		if floats {
+			floatZoneWidth = (float64(end) - float64(start)) * float64(outlierPercent) / 100.0
+		} else {
+			intZoneWidth = (end - start) * outlierPercent / 100
+			if intZoneWidth < 1 {
+				intZoneWidth = 1
+			}
+		}
+	}
+
+	for i := 0; i < total; i++ {
 		// Check for SIGINFO (ctrl-t) without blocking.
 		select {
 		case <-sigCh:
-			pct := float64(i) / float64(count) * 100
-			fmt.Fprintf(os.Stderr, "progress: %d / %d (%.1f%%)\n", i, count, pct)
+			pct := float64(i) / float64(total) * 100
+			fmt.Fprintf(os.Stderr, "progress: %d / %d (%.1f%%)\n", i, total, pct)
 		default:
 		}
 
-		if floats {
+		if outlierPositions[i] {
+			// Generate an outlier from a random edge zone.
+			coin, err := randomInt(rs, 0, 1, "", 1.0)
+			if err != nil {
+				return err
+			}
+			if floats {
+				fStart := float64(start)
+				fEnd := float64(end)
+				var v float64
+				if coin == 0 {
+					v, err = randomFloat(rs, fStart, fStart+floatZoneWidth, "", 1.0)
+				} else {
+					v, err = randomFloat(rs, fEnd-floatZoneWidth, fEnd, "", 1.0)
+				}
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(w, "%.8f\n", v)
+			} else {
+				var v int
+				if coin == 0 {
+					v, err = randomInt(rs, start, start+intZoneWidth, "", 1.0)
+				} else {
+					v, err = randomInt(rs, end-intZoneWidth, end, "", 1.0)
+				}
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(w, v)
+			}
+		} else if floats {
 			v, err := randomFloat(rs, float64(start), float64(end), skew, skewStrength)
 			if err != nil {
 				return err
@@ -136,13 +195,15 @@ func generate(start, end int, count int, floats bool, skew string, skewStrength 
 
 func main() {
 	var (
-		start        = flag.Int("start", 0, "inclusive lower bound")
-		end          = flag.Int("end", 100, "inclusive upper bound")
-		count        = flag.Int("count", 5, "how many numbers to emit")
-		floats       = flag.Bool("floats", false, "generate floats instead of integers")
-		skew         = flag.String("skew", "", "skew distribution: 'low' (toward start) or 'high' (toward end)")
-		skewStrength = flag.Float64("skew-strength", 2.0, "skew intensity: 1.0=uniform, higher=more skewed")
-		version      = flag.Bool("version", false, "display version and exit")
+		start          = flag.Int("start", 0, "inclusive lower bound")
+		end            = flag.Int("end", 100, "inclusive upper bound")
+		count          = flag.Int("count", 5, "how many numbers to emit")
+		floats         = flag.Bool("floats", false, "generate floats instead of integers")
+		skew           = flag.String("skew", "", "skew distribution: 'low' (toward start) or 'high' (toward end)")
+		skewStrength   = flag.Float64("skew-strength", 2.0, "skew intensity: 1.0=uniform, higher=more skewed")
+		outliers       = flag.Int("outliers", 0, "number of outlier values near range edges")
+		outlierPercent = flag.Int("outlier-percent", 10, "edge zone size as percent of range (1-49)")
+		version        = flag.Bool("version", false, "display version and exit")
 	)
 	flag.Parse()
 
@@ -170,7 +231,26 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := generate(*start, *end, *count, *floats, *skew, *skewStrength); err != nil {
+	if *outliers < 0 {
+		fmt.Fprintln(os.Stderr, "error: -outliers must be >= 0")
+		os.Exit(1)
+	}
+	if *outlierPercent < 1 || *outlierPercent > 49 {
+		fmt.Fprintln(os.Stderr, "error: -outlier-percent must be between 1 and 49")
+		os.Exit(1)
+	}
+	outlierPercentSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "outlier-percent" {
+			outlierPercentSet = true
+		}
+	})
+	if outlierPercentSet && *outliers == 0 {
+		fmt.Fprintln(os.Stderr, "error: -outlier-percent requires -outliers to be set")
+		os.Exit(1)
+	}
+
+	if err := generate(*start, *end, *count, *floats, *skew, *skewStrength, *outliers, *outlierPercent); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}

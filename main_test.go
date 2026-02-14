@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"encoding/binary"
 	"math"
+	"os"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -499,6 +503,180 @@ func TestRandomFloat_BoundsLargeRun(t *testing.T) {
 				t.Fatalf("skew=%q strength=%v: value %v outside [-50.0, 50.0)",
 					cfg.skew, cfg.strength, v)
 			}
+		}
+	}
+}
+
+// --- outlier tests -----------------------------------------------------------
+
+// captureGenerate runs generate() and captures its stdout output as a string.
+func captureGenerate(t *testing.T, start, end, count int, floats bool, skew string, skewStrength float64, outliers, outlierPercent int) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+
+	genErr := generate(start, end, count, floats, skew, skewStrength, outliers, outlierPercent)
+	w.Close()
+	os.Stdout = old
+
+	var buf strings.Builder
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		buf.WriteString(scanner.Text())
+		buf.WriteByte('\n')
+	}
+	r.Close()
+
+	if genErr != nil {
+		t.Fatalf("generate() error: %v", genErr)
+	}
+	return buf.String()
+}
+
+// parseInts parses newline-separated integers from output.
+func parseInts(t *testing.T, output string) []int {
+	t.Helper()
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	vals := make([]int, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		v, err := strconv.Atoi(line)
+		if err != nil {
+			t.Fatalf("parseInts: %q: %v", line, err)
+		}
+		vals = append(vals, v)
+	}
+	return vals
+}
+
+// parseFloats parses newline-separated floats from output.
+func parseFloats(t *testing.T, output string) []float64 {
+	t.Helper()
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	vals := make([]float64, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		v, err := strconv.ParseFloat(line, 64)
+		if err != nil {
+			t.Fatalf("parseFloats: %q: %v", line, err)
+		}
+		vals = append(vals, v)
+	}
+	return vals
+}
+
+func TestOutlier_ZeroOutliers(t *testing.T) {
+	// outliers=0 should produce exactly count values, same as before.
+	out := captureGenerate(t, 0, 1000, 20, false, "", 1.0, 0, 10)
+	vals := parseInts(t, out)
+	if len(vals) != 20 {
+		t.Errorf("expected 20 values, got %d", len(vals))
+	}
+	for i, v := range vals {
+		if v < 0 || v > 1000 {
+			t.Errorf("value[%d]=%d out of [0,1000]", i, v)
+		}
+	}
+}
+
+func TestOutlier_ExactCount(t *testing.T) {
+	// With outliers=5, count=20, we should get exactly 25 output lines.
+	out := captureGenerate(t, 0, 1000, 20, false, "", 1.0, 5, 10)
+	vals := parseInts(t, out)
+	if len(vals) != 25 {
+		t.Errorf("expected 25 values (20+5), got %d", len(vals))
+	}
+}
+
+func TestOutlier_ZoneBounds(t *testing.T) {
+	// With range [0,1000] and outlier-percent=10, edge zones are [0,100] and [900,1000].
+	// Run many times and verify all outlier-zone values are within bounds.
+	// We generate 0 normal + 100 outliers to get only outlier values.
+	out := captureGenerate(t, 0, 1000, 0, false, "", 1.0, 100, 10)
+	vals := parseInts(t, out)
+	if len(vals) != 100 {
+		t.Fatalf("expected 100 outlier values, got %d", len(vals))
+	}
+	for i, v := range vals {
+		inLow := v >= 0 && v <= 100
+		inHigh := v >= 900 && v <= 1000
+		if !inLow && !inHigh {
+			t.Errorf("outlier[%d]=%d not in [0,100] or [900,1000]", i, v)
+		}
+	}
+}
+
+func TestOutlier_Validation(t *testing.T) {
+	// Test that generate rejects negative count (proxy for validation).
+	err := generate(0, 100, -1, false, "", 1.0, 0, 10)
+	if err == nil {
+		t.Error("expected error for negative count")
+	}
+}
+
+func TestOutlier_LargeRunIntCount(t *testing.T) {
+	// Generate 10k normal + 50 outliers in [0, 1000], percent=10.
+	// Edge zones: [0,100] and [900,1000]. Total output: 10050 lines.
+	out := captureGenerate(t, 0, 1000, 10_000, false, "", 1.0, 50, 10)
+	vals := parseInts(t, out)
+	if len(vals) != 10_050 {
+		t.Fatalf("expected 10050 values, got %d", len(vals))
+	}
+	edgeCount := 0
+	for _, v := range vals {
+		if v <= 100 || v >= 900 {
+			edgeCount++
+		}
+	}
+	// With uniform distribution over [0,1000], about 20.1% fall in edges.
+	// 10k * 0.201 ≈ 2010, plus 50 outliers. Edge count should exceed
+	// the expected uniform edge count.
+	uniformEdgeExpected := float64(10_000) * 201.0 / 1001.0
+	if float64(edgeCount) < uniformEdgeExpected {
+		t.Errorf("edge count %d lower than uniform expectation %.0f; outliers may not be working",
+			edgeCount, uniformEdgeExpected)
+	}
+}
+
+func TestOutlier_FloatZones(t *testing.T) {
+	// Generate 0 normal + 100 outliers as floats in [0, 1000), percent=10.
+	// Edge zones: [0, 100) and [900, 1000).
+	out := captureGenerate(t, 0, 1000, 0, true, "", 1.0, 100, 10)
+	vals := parseFloats(t, out)
+	if len(vals) != 100 {
+		t.Fatalf("expected 100 float outlier values, got %d", len(vals))
+	}
+	for i, v := range vals {
+		inLow := v >= 0.0 && v < 100.0
+		inHigh := v >= 900.0 && v < 1000.0
+		if !inLow && !inHigh {
+			t.Errorf("float outlier[%d]=%v not in [0,100) or [900,1000)", i, v)
+		}
+	}
+}
+
+func TestOutlier_WorksWithSkew(t *testing.T) {
+	// Outliers + skew together: total count should be correct and
+	// outlier values should still be in edge zones.
+	out := captureGenerate(t, 0, 1000, 100, false, "low", 2.0, 10, 10)
+	vals := parseInts(t, out)
+	if len(vals) != 110 {
+		t.Fatalf("expected 110 values (100+10), got %d", len(vals))
+	}
+	// All values should be in [0, 1000].
+	for i, v := range vals {
+		if v < 0 || v > 1000 {
+			t.Errorf("value[%d]=%d out of [0,1000]", i, v)
 		}
 	}
 }
