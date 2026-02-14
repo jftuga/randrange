@@ -62,6 +62,16 @@ $ randrange -start 10 -end 20 -count 1
 15
 ```
 
+## Progress Status
+
+On macOS and BSD systems, pressing **Ctrl-T** while `randrange` is running sends a `SIGINFO` signal, which causes it to print the current progress to stderr:
+
+```
+progress: 500000 / 1000000 (50.0%)
+```
+
+This is useful when generating a large quantity of numbers (e.g., `-count 1000000`) and you want to check how far along the run is. On other platforms this signal is not available and Ctrl-T has no effect.
+
 ## Notes
 
 * Uses `crypto/rand` for cryptographic strength.
