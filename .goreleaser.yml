@@ -81,6 +81,6 @@ brews:
       name: jftuga
       email: jftuga@users.noreply.github.com
     homepage: https://github.com/jftuga/randrange
-    description: "CLI for computing statistics"
+    description: "CLI random number generator"
     test: system "#{bin}/randrange -version"
     install: bin.install "randrange"
